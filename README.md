@@ -6,6 +6,17 @@ A Model Context Protocol (MCP) server for creating, reading, and manipulating Mi
 
 Office-Word-MCP-Server implements the [Model Context Protocol](https://modelcontextprotocol.io/) to expose Word document operations as tools and resources. It serves as a bridge between AI assistants and Microsoft Word documents, allowing for document creation, content addition, formatting, and analysis.
 
+### Example
+
+#### Pormpt
+
+![image](https://github.com/user-attachments/assets/f49b0bcc-88b2-4509-bf50-995b9a40038c)
+
+#### Output
+
+![image](https://github.com/user-attachments/assets/ff64385d-3822-4160-8cdf-f8a484ccc01a)
+
+
 ## Features
 
 ### Document Management
@@ -50,7 +61,7 @@ Office-Word-MCP-Server implements the [Model Context Protocol](https://modelcont
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/Office-Word-MCP-Server.git
+git clone https://github.com/GongRzhe/Office-Word-MCP-Server.git
 cd Office-Word-MCP-Server
 
 # Install dependencies
