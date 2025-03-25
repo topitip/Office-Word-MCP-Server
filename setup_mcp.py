@@ -179,7 +179,7 @@ def generate_mcp_config_uvx():
         "mcpServers": {
             "word-document-server": {
                 "command": "uvx",
-                "args": ["word_document_server"],
+                "args": ["--from", "office-word-mcp-server", "word_mcp_server"],
                 "env": {}
             }
         }
