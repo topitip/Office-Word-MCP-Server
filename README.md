@@ -2,6 +2,8 @@
 
 A Model Context Protocol (MCP) server for creating, reading, and manipulating Microsoft Word documents. This server enables AI assistants to work with Word documents through a standardized interface, providing rich document editing capabilities.
 
+![](https://badge.mcpx.dev?type=server 'MCP Server')
+
 ## Overview
 
 Office-Word-MCP-Server implements the [Model Context Protocol](https://modelcontextprotocol.io/) to expose Word document operations as tools and resources. It serves as a bridge between AI assistants and Microsoft Word documents, allowing for document creation, content addition, formatting, and analysis.
@@ -77,12 +79,14 @@ Alternatively, you can use the provided setup script which handles:
 - Generating MCP configuration
 
 ```bash
-python setup.py
+python setup_mcp.py
 ```
 
 ## Usage with Claude for Desktop
 
 ### Configuration
+
+#### Method 1: After Local Installation
 
 1. After installation, add the server to your Claude for Desktop configuration file:
 
@@ -93,6 +97,23 @@ python setup.py
       "command": "python",
       "args": [
         "/path/to/word_server.py"
+      ]
+    }
+  }
+}
+```
+
+#### Method 2: Without Installation (Using uvx)
+
+1. You can also configure Claude for Desktop to use the server without local installation by using the uvx package manager:
+
+```json
+{
+  "mcpServers": {
+    "word-document-server": {
+      "command": "uvx",
+      "args": [
+        "--from", "office-word-mcp-server", "word_mcp_server"
       ]
     }
   }

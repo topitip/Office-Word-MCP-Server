@@ -15,7 +15,7 @@ from docx.enum.text import WD_COLOR_INDEX
 from docx.oxml.shared import OxmlElement, qn
 from docx.oxml.ns import nsdecls
 from docx.oxml import parse_xml
-
+import sys
 # Initialize FastMCP server
 mcp = FastMCP("word-document-server")
 
@@ -1039,6 +1039,10 @@ async def add_page_break(filename: str) -> str:
 
 
 # Main execution point
-if __name__ == "__main__":
-    # Initialize and run the server
+def main():
+    """Entry point for the MCP server."""
+    # Run the server
     mcp.run(transport='stdio')
+
+if __name__ == "__main__":
+    main()
