@@ -222,8 +222,8 @@ def ensure_table_style(doc):
         pass
 
 # MCP Tools
-@mcp.tool()
-async def create_document(filename: str, title: Optional[str] = None, author: Optional[str] = None) -> str:
+@mcp.tool(name="create_document")
+async def create_document(filename: str, title = None, author = None) -> str:
     """Create a new Word document with optional metadata.
     
     Args:
@@ -259,14 +259,15 @@ async def create_document(filename: str, title: Optional[str] = None, author: Op
     except Exception as e:
         return f"Failed to create document: {str(e)}"
 
-@mcp.tool()
-async def add_heading(filename: str, text: str, level: int = 1) -> str:
+@mcp.tool(name="add_heading")
+async def add_heading(filename: str, text: str, level: int = 1, alignment = None) -> str:
     """Add a heading to a Word document.
     
     Args:
         filename: Path to the Word document
         text: Heading text
         level: Heading level (1-9, where 1 is the highest level)
+        alignment: Optional alignment ('left', 'center', 'right', 'justify')
     """
     if not filename.endswith('.docx'):
         filename += '.docx'
@@ -289,6 +290,18 @@ async def add_heading(filename: str, text: str, level: int = 1) -> str:
         # Try to add heading with style
         try:
             heading = doc.add_heading(text, level=level)
+            
+            # Set alignment if specified
+            if alignment:
+                alignment_map = {
+                    'left': WD_PARAGRAPH_ALIGNMENT.LEFT,
+                    'center': WD_PARAGRAPH_ALIGNMENT.CENTER,
+                    'right': WD_PARAGRAPH_ALIGNMENT.RIGHT,
+                    'justify': WD_PARAGRAPH_ALIGNMENT.JUSTIFY
+                }
+                if alignment.lower() in alignment_map:
+                    heading.alignment = alignment_map[alignment.lower()]
+            
             doc.save(filename)
             return f"Heading '{text}' (level {level}) added to {filename}"
         except Exception as style_error:
@@ -305,19 +318,31 @@ async def add_heading(filename: str, text: str, level: int = 1) -> str:
             else:
                 run.font.size = Pt(12)
             
+            # Set alignment if specified
+            if alignment:
+                alignment_map = {
+                    'left': WD_PARAGRAPH_ALIGNMENT.LEFT,
+                    'center': WD_PARAGRAPH_ALIGNMENT.CENTER,
+                    'right': WD_PARAGRAPH_ALIGNMENT.RIGHT,
+                    'justify': WD_PARAGRAPH_ALIGNMENT.JUSTIFY
+                }
+                if alignment.lower() in alignment_map:
+                    paragraph.alignment = alignment_map[alignment.lower()]
+            
             doc.save(filename)
             return f"Heading '{text}' added to {filename} with direct formatting (style not available)"
     except Exception as e:
         return f"Failed to add heading: {str(e)}"
 
-@mcp.tool()
-async def add_paragraph(filename: str, text: str, style: Optional[str] = None) -> str:
+@mcp.tool(name="add_paragraph")
+async def add_paragraph(filename: str, text: str, style = None, alignment = None) -> str:
     """Add a paragraph to a Word document.
     
     Args:
         filename: Path to the Word document
         text: Paragraph text
         style: Optional paragraph style name
+        alignment: Optional alignment ('left', 'center', 'right', 'justify')
     """
     if not filename.endswith('.docx'):
         filename += '.docx'
@@ -344,13 +369,24 @@ async def add_paragraph(filename: str, text: str, style: Optional[str] = None) -
                 doc.save(filename)
                 return f"Style '{style}' not found, paragraph added with default style to {filename}"
         
+        # Set alignment if specified
+        if alignment:
+            alignment_map = {
+                'left': WD_PARAGRAPH_ALIGNMENT.LEFT,
+                'center': WD_PARAGRAPH_ALIGNMENT.CENTER,
+                'right': WD_PARAGRAPH_ALIGNMENT.RIGHT,
+                'justify': WD_PARAGRAPH_ALIGNMENT.JUSTIFY
+            }
+            if alignment.lower() in alignment_map:
+                paragraph.alignment = alignment_map[alignment.lower()]
+        
         doc.save(filename)
         return f"Paragraph added to {filename}"
     except Exception as e:
         return f"Failed to add paragraph: {str(e)}"
 
-@mcp.tool()
-async def add_table(filename: str, rows: int, cols: int, data: Optional[List[List[str]]] = None) -> str:
+@mcp.tool(name="add_table")
+async def add_table(filename: str, rows: int, cols: int, data = None) -> str:
     """Add a table to a Word document.
     
     Args:
@@ -398,8 +434,8 @@ async def add_table(filename: str, rows: int, cols: int, data: Optional[List[Lis
     except Exception as e:
         return f"Failed to add table: {str(e)}"
 
-@mcp.tool()
-async def add_picture(filename: str, image_path: str, width: Optional[float] = None) -> str:
+@mcp.tool(name="add_picture")
+async def add_picture(filename: str, image_path: str, width = None) -> str:
     """Add an image to a Word document.
     
     Args:
@@ -458,7 +494,7 @@ async def add_picture(filename: str, image_path: str, width: Optional[float] = N
         error_msg = str(outer_error)
         return f"Document processing error: {error_type} - {error_msg or 'No error details available'}"
 
-@mcp.tool()
+@mcp.tool(name="get_document_info")
 async def get_document_info(filename: str) -> str:
     """Get information about a Word document.
     
@@ -477,7 +513,7 @@ async def get_document_info(filename: str) -> str:
     except Exception as e:
         return f"Failed to get document info: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(name="get_document_text")
 async def get_document_text(filename: str) -> str:
     """Extract all text from a Word document.
     
@@ -489,7 +525,7 @@ async def get_document_text(filename: str) -> str:
     
     return extract_document_text(filename)
 
-@mcp.tool()
+@mcp.tool(name="get_document_outline")
 async def get_document_outline(filename: str) -> str:
     """Get the structure of a Word document.
     
@@ -502,7 +538,7 @@ async def get_document_outline(filename: str) -> str:
     structure = get_document_structure(filename)
     return json.dumps(structure, indent=2)
 
-@mcp.tool()
+@mcp.tool(name="list_available_documents")
 async def list_available_documents(directory: str = ".") -> str:
     """List all .docx files in the specified directory.
     
@@ -528,7 +564,7 @@ async def list_available_documents(directory: str = ".") -> str:
     except Exception as e:
         return f"Failed to list documents: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(name="copy_document")
 async def copy_document(source_filename: str, destination_filename: Optional[str] = None) -> str:
     """Create a copy of a Word document.
     
@@ -559,6 +595,7 @@ async def document_resource(path: str) -> str:
         return f"Document {path} does not exist"
     
     return extract_document_text(path)
+
 def find_paragraph_by_text(doc, text, partial_match=False):
     """
     Find paragraphs containing specific text.
@@ -702,7 +739,7 @@ def create_style(doc, style_name, style_type, base_style=None, font_properties=N
 
 # Add these MCP tools to the existing set
 
-@mcp.tool()
+@mcp.tool(name="format_text")
 async def format_text(filename: str, paragraph_index: int, start_pos: int, end_pos: int, 
                      bold: Optional[bool] = None, italic: Optional[bool] = None, 
                      underline: Optional[bool] = None, color: Optional[str] = None,
@@ -794,7 +831,7 @@ async def format_text(filename: str, paragraph_index: int, start_pos: int, end_p
     except Exception as e:
         return f"Failed to format text: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(name="search_and_replace")
 async def search_and_replace(filename: str, find_text: str, replace_text: str) -> str:
     """Search for text and replace all occurrences.
     
@@ -828,7 +865,7 @@ async def search_and_replace(filename: str, find_text: str, replace_text: str) -
     except Exception as e:
         return f"Failed to search and replace: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(name="delete_paragraph")
 async def delete_paragraph(filename: str, paragraph_index: int) -> str:
     """Delete a paragraph from a document.
     
@@ -865,7 +902,7 @@ async def delete_paragraph(filename: str, paragraph_index: int) -> str:
     except Exception as e:
         return f"Failed to delete paragraph: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(name="create_custom_style")
 async def create_custom_style(filename: str, style_name: str, 
                              bold: Optional[bool] = None, italic: Optional[bool] = None,
                              font_size: Optional[int] = None, font_name: Optional[str] = None,
@@ -923,7 +960,7 @@ async def create_custom_style(filename: str, style_name: str,
     except Exception as e:
         return f"Failed to create style: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(name="format_table")
 async def format_table(filename: str, table_index: int, 
                       has_header_row: Optional[bool] = None,
                       border_style: Optional[str] = None,
@@ -1011,7 +1048,7 @@ async def format_table(filename: str, table_index: int,
     except Exception as e:
         return f"Failed to format table: {str(e)}"
 
-@mcp.tool()
+@mcp.tool(name="add_page_break")
 async def add_page_break(filename: str) -> str:
     """Add a page break to the document.
     
@@ -1037,6 +1074,52 @@ async def add_page_break(filename: str) -> str:
     except Exception as e:
         return f"Failed to add page break: {str(e)}"
 
+@mcp.tool(name="set_paragraph_alignment")
+async def set_paragraph_alignment(filename: str, paragraph_index: int, alignment: str) -> str:
+    """Set the alignment for a paragraph in a Word document.
+    
+    Args:
+        filename: Path to the Word document
+        paragraph_index: Index of the paragraph (0-based)
+        alignment: Alignment to set ('left', 'center', 'right', 'justify')
+    """
+    if not filename.endswith('.docx'):
+        filename += '.docx'
+    
+    if not os.path.exists(filename):
+        return f"Document {filename} does not exist"
+    
+    # Check if file is writeable
+    is_writeable, error_message = check_file_writeable(filename)
+    if not is_writeable:
+        return f"Cannot modify document: {error_message}. Consider creating a copy first."
+    
+    try:
+        doc = Document(filename)
+        
+        # Validate paragraph index
+        if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
+            return f"Invalid paragraph index. Document has {len(doc.paragraphs)} paragraphs (0-{len(doc.paragraphs)-1})."
+        
+        # Validate alignment
+        alignment_map = {
+            'left': WD_PARAGRAPH_ALIGNMENT.LEFT,
+            'center': WD_PARAGRAPH_ALIGNMENT.CENTER,
+            'right': WD_PARAGRAPH_ALIGNMENT.RIGHT,
+            'justify': WD_PARAGRAPH_ALIGNMENT.JUSTIFY
+        }
+        
+        if alignment.lower() not in alignment_map:
+            return f"Invalid alignment. Supported values: left, center, right, justify."
+        
+        # Set alignment
+        paragraph = doc.paragraphs[paragraph_index]
+        paragraph.alignment = alignment_map[alignment.lower()]
+        
+        doc.save(filename)
+        return f"Alignment for paragraph {paragraph_index} set to '{alignment}'."
+    except Exception as e:
+        return f"Failed to set paragraph alignment: {str(e)}"
 
 # Main execution point
 def main():

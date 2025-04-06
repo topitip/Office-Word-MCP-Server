@@ -1,0 +1,15 @@
+version: '3'
+
+services:
+  word-mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - /tmp/documents:/app/documents
+    environment:
+      - MCP_DEBUG=0
+    restart: unless-stopped
+    # Uncomment the following lines if external access is needed
+    # ports:
+    #   - "8000:8000" 
