@@ -2,25 +2,32 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies
+# Устанавливаем необходимые зависимости
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy project files
+# Устанавливаем необходимые системные пакеты
+RUN apt-get update && apt-get install -y \
+    libxml2-dev \
+    libxslt1-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Копируем файлы проекта
 COPY word_server.py .
 COPY pyproject.toml .
 COPY LICENSE .
 COPY README.md .
 
-# Create MCP configuration
+# Создаем MCP конфигурацию
 RUN mkdir -p /root/.mcp
 COPY mcp-config.json /root/.mcp/config.json
 
-# Create directory for documents
+# Создаем директорию для документов
 RUN mkdir -p /app/documents
+VOLUME /app/documents
 
-# Expose ports (if needed in the future)
-# EXPOSE 8000
+# Указываем переменную окружения для платформы
+ENV PYTHONUNBUFFERED=1
 
-# Run server on container start
+# Запускаем сервер при старте контейнера
 CMD ["python", "word_server.py"] 

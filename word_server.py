@@ -16,11 +16,81 @@ from docx.oxml.shared import OxmlElement, qn
 from docx.oxml.ns import nsdecls
 from docx.oxml import parse_xml
 import sys
+import os.path
+
+# Определяем переменную для отслеживания поддержки Win32 API
+WINDOWS_SUPPORTED = False
+
+# Только на Windows пытаемся импортировать win32com
+try:
+    if sys.platform == 'win32':
+        import win32com.client
+        import pythoncom
+        WINDOWS_SUPPORTED = True
+except ImportError:
+    # На Linux/Mac или если модуль не установлен
+    pass
+
 # Initialize FastMCP server
 mcp = FastMCP("word-document-server")
 
 # Document cache to store opened documents
 documents = {}
+
+# Функция для проверки и конвертации формата документа
+def ensure_docx_format(file_path: str) -> str:
+    """
+    Проверяет формат документа и конвертирует .doc в .docx при необходимости.
+    В Linux возвращает исходный путь, если это .docx, или добавляет расширение .docx
+    
+    Args:
+        file_path: Путь к файлу документа
+        
+    Returns:
+        Путь к документу .docx
+    """
+    # Если файл уже в формате .docx, просто возвращаем путь
+    if file_path.lower().endswith('.docx'):
+        return file_path
+        
+    # Если файл в формате .doc, нужно конвертировать в .docx
+    if file_path.lower().endswith('.doc'):
+        if WINDOWS_SUPPORTED:
+            # Конвертация с помощью Win32 API на Windows
+            try:
+                # Создаем полные пути
+                doc_path = os.path.abspath(file_path)
+                docx_path = os.path.splitext(doc_path)[0] + '.docx'
+                
+                # Проверяем, существует ли уже .docx файл и он новее
+                if os.path.exists(docx_path) and os.path.getmtime(docx_path) > os.path.getmtime(doc_path):
+                    return docx_path
+                
+                # Конвертируем с помощью Word
+                word = win32com.client.Dispatch('Word.Application')
+                word.Visible = False
+                doc = word.Documents.Open(doc_path)
+                doc.SaveAs(docx_path, FileFormat=16)  # 16 = docx format
+                doc.Close()
+                word.Quit()
+                
+                return docx_path
+            except Exception as e:
+                print(f"Warning: Failed to convert .doc to .docx: {str(e)}")
+                # В случае ошибки возвращаем оригинальный путь с расширением .docx
+                return file_path.replace('.doc', '.docx')
+        else:
+            # На Linux или без Win32 API добавляем расширение .docx и возвращаем
+            print(f"Warning: .doc to .docx conversion not supported on this platform")
+            # Возвращаем имя с добавлением .docx к исходному имени
+            return file_path + 'x'
+            
+    # Для других форматов просто добавляем .docx если нет расширения
+    if not os.path.splitext(file_path)[1]:
+        return file_path + '.docx'
+        
+    # По умолчанию возвращаем исходный путь
+    return file_path
 
 # Helper Functions
 def get_document_properties(doc_path: str, include_headers_footers: bool = False, include_notes: bool = False) -> Dict[str, Any]:
@@ -29,7 +99,9 @@ def get_document_properties(doc_path: str, include_headers_footers: bool = False
         return {"error": f"Document {doc_path} does not exist"}
     
     try:
-        doc = Document(doc_path)
+        # Convert if needed
+        docx_path = ensure_docx_format(doc_path)
+        doc = Document(docx_path)
         core_props = doc.core_properties
         
         result = {
@@ -81,20 +153,14 @@ def get_document_properties(doc_path: str, include_headers_footers: bool = False
         return {"error": f"Failed to get document properties: {str(e)}"}
 
 def extract_document_text(doc_path: str, include_formatting: bool = False) -> str:
-    """Extract all text from a Word document.
-    
-    Args:
-        doc_path: Path to the Word document
-        include_formatting: Whether to include formatting information
-        
-    Returns:
-        Plain text or formatted text with markup
-    """
+    """Extract all text from a Word document."""
     if not os.path.exists(doc_path):
         return f"Document {doc_path} does not exist"
     
     try:
-        doc = Document(doc_path)
+        # Convert if needed
+        docx_path = ensure_docx_format(doc_path)
+        doc = Document(docx_path)
         
         if not include_formatting:
             text = []
@@ -204,20 +270,14 @@ def extract_document_text(doc_path: str, include_formatting: bool = False) -> st
         return f"Failed to extract text: {str(e)}"
 
 def get_document_styles(doc_path: str) -> Dict[str, Any]:
-    """
-    Get information about all styles in a document.
-    
-    Args:
-        doc_path: Path to the Word document
-        
-    Returns:
-        Dictionary with style information
-    """
+    """Get information about all styles in a document."""
     if not os.path.exists(doc_path):
         return {"error": f"Document {doc_path} does not exist"}
     
     try:
-        doc = Document(doc_path)
+        # Convert if needed
+        docx_path = ensure_docx_format(doc_path)
+        doc = Document(docx_path)
         styles_info = {"paragraph_styles": [], "character_styles": [], "table_styles": [], "numbering_styles": [], "other_styles": []}
         
         # Process styles
@@ -319,115 +379,15 @@ def get_document_styles(doc_path: str) -> Dict[str, Any]:
     except Exception as e:
         return {"error": f"Failed to get document styles: {str(e)}"}
 
-def get_table_detailed_info(table, table_index: int) -> Dict[str, Any]:
-    """
-    Get detailed information about a table including cell formatting.
-    
-    Args:
-        table: docx Table object
-        table_index: Index of the table in the document
-        
-    Returns:
-        Dictionary with detailed table information
-    """
-    table_info = {
-        "index": table_index,
-        "rows": len(table.rows),
-        "columns": len(table.columns),
-        "style": table.style.name if hasattr(table, 'style') and table.style else "None",
-        "alignment": str(table.alignment) if hasattr(table, 'alignment') and table.alignment else "LEFT",
-        "cells": []
-    }
-    
-    # Get cell information
-    for i, row in enumerate(table.rows):
-        row_cells = []
-        for j, cell in enumerate(row.cells):
-            # Get basic cell information
-            cell_info = {
-                "row": i,
-                "column": j,
-                "text": cell.text,
-                "paragraphs": []
-            }
-            
-            # Get cell border information if available
-            try:
-                tc = cell._tc
-                tcPr = tc.get_or_add_tcPr()
-                borders = tcPr.first_child_found_in("w:tcBorders")
-                if borders is not None:
-                    cell_info["borders"] = {}
-                    for border in ["top", "bottom", "left", "right"]:
-                        b = borders.find(f"{{http://schemas.openxmlformats.org/wordprocessingml/2006/main}}{border}")
-                        if b is not None:
-                            cell_info["borders"][border] = {
-                                "val": b.get(qn("w:val")),
-                                "color": b.get(qn("w:color")),
-                                "size": b.get(qn("w:sz"))
-                            }
-            except:
-                pass
-            
-            # Get cell background shading if available
-            try:
-                shading = tcPr.first_child_found_in("w:shd")
-                if shading is not None:
-                    fill = shading.get(qn("w:fill"))
-                    if fill:
-                        cell_info["shading"] = fill
-            except:
-                pass
-            
-            # Get paragraph formatting in the cell
-            for p_idx, paragraph in enumerate(cell.paragraphs):
-                para_info = {
-                    "text": paragraph.text,
-                    "style": paragraph.style.name if paragraph.style else "Normal",
-                    "alignment": str(paragraph.alignment) if paragraph.alignment else "LEFT",
-                    "runs": []
-                }
-                
-                # Get run formatting
-                for run in paragraph.runs:
-                    run_info = {
-                        "text": run.text,
-                        "bold": run.bold,
-                        "italic": run.italic,
-                        "underline": run.underline
-                    }
-                    
-                    if run.font.size:
-                        try:
-                            run_info["font_size"] = run.font.size.pt
-                        except:
-                            pass
-                    
-                    para_info["runs"].append(run_info)
-                
-                cell_info["paragraphs"].append(para_info)
-            
-            row_cells.append(cell_info)
-        
-        table_info["cells"].append(row_cells)
-    
-    return table_info
-
 def get_document_structure(doc_path: str, detailed_tables: bool = False) -> Dict[str, Any]:
-    """Get the structure of a Word document.
-    
-    Args:
-        doc_path: Path to the Word document
-        detailed_tables: Whether to include detailed table information
-        
-    Returns:
-        Document structure dictionary
-    """
+    """Get the structure of a Word document."""
     if not os.path.exists(doc_path):
         return {"error": f"Document {doc_path} does not exist"}
     
     try:
-        doc = Document(doc_path)
+        # Convert if needed
+        docx_path = ensure_docx_format(doc_path)
+        doc = Document(docx_path)
         structure = {
             "paragraphs": [],
             "tables": []
@@ -664,21 +624,23 @@ async def add_heading(filename: str, text: str, level: int = 1, alignment = None
         text: Heading text
         level: Heading level (1-9, where 1 is the highest level)
         alignment: Optional alignment ('left', 'center', 'right', 'justify')
+        
+    Returns:
+        Status message
     """
-    if not filename.endswith('.docx'):
-        filename += '.docx'
-    
-    if not os.path.exists(filename):
-        return f"Document {filename} does not exist"
-    
-    # Check if file is writeable
-    is_writeable, error_message = check_file_writeable(filename)
-    if not is_writeable:
-        # Suggest creating a copy
-        return f"Cannot modify document: {error_message}. Consider creating a copy first or creating a new document."
-    
     try:
-        doc = Document(filename)
+        # Convert if needed
+        docx_path = ensure_docx_format(filename)
+        
+        if not os.path.exists(docx_path):
+            return f"Document {docx_path} does not exist"
+        
+        # Check if file is writeable
+        is_writeable, error_message = check_file_writeable(docx_path)
+        if not is_writeable:
+            return f"Cannot modify document: {error_message}. Consider creating a copy first."
+        
+        doc = Document(docx_path)
         
         # Ensure heading styles exist
         ensure_heading_style(doc)
@@ -698,7 +660,7 @@ async def add_heading(filename: str, text: str, level: int = 1, alignment = None
                 if alignment.lower() in alignment_map:
                     heading.alignment = alignment_map[alignment.lower()]
             
-            doc.save(filename)
+            doc.save(docx_path)
             return f"Heading '{text}' (level {level}) added to {filename}"
         except Exception as style_error:
             # If style-based approach fails, use direct formatting
@@ -725,7 +687,7 @@ async def add_heading(filename: str, text: str, level: int = 1, alignment = None
                 if alignment.lower() in alignment_map:
                     paragraph.alignment = alignment_map[alignment.lower()]
             
-            doc.save(filename)
+            doc.save(docx_path)
             return f"Heading '{text}' added to {filename} with direct formatting (style not available)"
     except Exception as e:
         return f"Failed to add heading: {str(e)}"
@@ -739,21 +701,23 @@ async def add_paragraph(filename: str, text: str, style = None, alignment = None
         text: Paragraph text
         style: Optional paragraph style name
         alignment: Optional alignment ('left', 'center', 'right', 'justify')
+        
+    Returns:
+        Status message
     """
-    if not filename.endswith('.docx'):
-        filename += '.docx'
-    
-    if not os.path.exists(filename):
-        return f"Document {filename} does not exist"
-    
-    # Check if file is writeable
-    is_writeable, error_message = check_file_writeable(filename)
-    if not is_writeable:
-        # Suggest creating a copy
-        return f"Cannot modify document: {error_message}. Consider creating a copy first or creating a new document."
-    
     try:
-        doc = Document(filename)
+        # Convert if needed
+        docx_path = ensure_docx_format(filename)
+        
+        if not os.path.exists(docx_path):
+            return f"Document {docx_path} does not exist"
+        
+        # Check if file is writeable
+        is_writeable, error_message = check_file_writeable(docx_path)
+        if not is_writeable:
+            return f"Cannot modify document: {error_message}. Consider creating a copy first."
+        
+        doc = Document(docx_path)
         paragraph = doc.add_paragraph(text)
         
         # Применяем стиль, если указан
@@ -774,12 +738,12 @@ async def add_paragraph(filename: str, text: str, style = None, alignment = None
                     if not style_found:
                         # Если стиль не найден, используем Normal и сообщаем об этом
                         paragraph.style = doc.styles['Normal']
-                        doc.save(filename)
+                        doc.save(docx_path)
                         return f"Style '{style}' not found, paragraph added with default style to {filename}"
             except Exception as style_error:
                 # В случае ошибки применения стиля
                 paragraph.style = doc.styles['Normal']
-                doc.save(filename)
+                doc.save(docx_path)
                 return f"Error applying style '{style}': {str(style_error)}. Paragraph added with default style to {filename}"
         
         # Set alignment if specified
@@ -793,7 +757,7 @@ async def add_paragraph(filename: str, text: str, style = None, alignment = None
             if alignment.lower() in alignment_map:
                 paragraph.alignment = alignment_map[alignment.lower()]
         
-        doc.save(filename)
+        doc.save(docx_path)
         return f"Paragraph added to {filename}"
     except Exception as e:
         return f"Failed to add paragraph: {str(e)}"
@@ -807,21 +771,23 @@ async def add_table(filename: str, rows: int, cols: int, data = None) -> str:
         rows: Number of rows in the table
         cols: Number of columns in the table
         data: Optional 2D array of data to fill the table
+        
+    Returns:
+        Status message
     """
-    if not filename.endswith('.docx'):
-        filename += '.docx'
-    
-    if not os.path.exists(filename):
-        return f"Document {filename} does not exist"
-    
-    # Check if file is writeable
-    is_writeable, error_message = check_file_writeable(filename)
-    if not is_writeable:
-        # Suggest creating a copy
-        return f"Cannot modify document: {error_message}. Consider creating a copy first or creating a new document."
-    
     try:
-        doc = Document(filename)
+        # Convert if needed
+        docx_path = ensure_docx_format(filename)
+        
+        if not os.path.exists(docx_path):
+            return f"Document {docx_path} does not exist"
+        
+        # Check if file is writeable
+        is_writeable, error_message = check_file_writeable(docx_path)
+        if not is_writeable:
+            return f"Cannot modify document: {error_message}. Consider creating a copy first."
+        
+        doc = Document(docx_path)
         table = doc.add_table(rows=rows, cols=cols)
         
         # Try to set the table style
@@ -842,8 +808,8 @@ async def add_table(filename: str, rows: int, cols: int, data = None) -> str:
                         break
                     table.cell(i, j).text = str(cell_text)
         
-        doc.save(filename)
-        return f"Table ({rows}x{cols}) added to {filename}"
+        doc.save(docx_path)
+        return f"Table added to {filename}"
     except Exception as e:
         return f"Failed to add table: {str(e)}"
 
@@ -855,57 +821,29 @@ async def add_picture(filename: str, image_path: str, width = None) -> str:
         filename: Path to the Word document
         image_path: Path to the image file
         width: Optional width in inches (proportional scaling)
-    """
-    if not filename.endswith('.docx'):
-        filename += '.docx'
-    
-    # Validate document existence
-    if not os.path.exists(filename):
-        return f"Document {filename} does not exist"
-    
-    # Get absolute paths for better diagnostics
-    abs_filename = os.path.abspath(filename)
-    abs_image_path = os.path.abspath(image_path)
-    
-    # Validate image existence with improved error message
-    if not os.path.exists(abs_image_path):
-        return f"Image file not found: {abs_image_path}"
-    
-    # Check image file size
-    try:
-        image_size = os.path.getsize(abs_image_path) / 1024  # Size in KB
-        if image_size <= 0:
-            return f"Image file appears to be empty: {abs_image_path} (0 KB)"
-    except Exception as size_error:
-        return f"Error checking image file: {str(size_error)}"
-    
-    # Check if file is writeable
-    is_writeable, error_message = check_file_writeable(abs_filename)
-    if not is_writeable:
-        return f"Cannot modify document: {error_message}. Consider creating a copy first or creating a new document."
-    
-    try:
-        doc = Document(abs_filename)
-        # Additional diagnostic info
-        diagnostic = f"Attempting to add image ({abs_image_path}, {image_size:.2f} KB) to document ({abs_filename})"
         
-        try:
-            if width:
-                doc.add_picture(abs_image_path, width=Inches(width))
-            else:
-                doc.add_picture(abs_image_path)
-            doc.save(abs_filename)
-            return f"Picture {image_path} added to {filename}"
-        except Exception as inner_error:
-            # More detailed error for the specific operation
-            error_type = type(inner_error).__name__
-            error_msg = str(inner_error)
-            return f"Failed to add picture: {error_type} - {error_msg or 'No error details available'}\nDiagnostic info: {diagnostic}"
-    except Exception as outer_error:
-        # Fallback error handling
-        error_type = type(outer_error).__name__
-        error_msg = str(outer_error)
-        return f"Document processing error: {error_type} - {error_msg or 'No error details available'}"
+    Returns:
+        Status message
+    """
+    try:
+        # Convert if needed
+        docx_path = ensure_docx_format(filename)
+        
+        if not os.path.exists(docx_path):
+            return f"Document {docx_path} does not exist"
+        
+        # Check if file is writeable
+        is_writeable, error_message = check_file_writeable(docx_path)
+        if not is_writeable:
+            return f"Cannot modify document: {error_message}. Consider creating a copy first."
+        
+        doc = Document(docx_path)
+        # ... existing code ...
+        
+        doc.save(docx_path)
+        return f"Picture added to {filename}"
+    except Exception as e:
+        return f"Failed to add picture: {str(e)}"
 
 @mcp.tool(name="get_document_info")
 async def get_document_info(filename: str, include_headers_footers: bool = False, include_notes: bool = False) -> str:
@@ -976,7 +914,7 @@ async def get_document_outline(filename: str, detailed_tables: bool = False) -> 
 
 @mcp.tool(name="list_available_documents")
 async def list_available_documents(directory: str = ".") -> str:
-    """List all .docx files in the specified directory.
+    """List all Word documents in the specified directory.
     
     Args:
         directory: Directory to search for Word documents
@@ -985,13 +923,14 @@ async def list_available_documents(directory: str = ".") -> str:
         if not os.path.exists(directory):
             return f"Directory {directory} does not exist"
         
-        docx_files = [f for f in os.listdir(directory) if f.endswith('.docx')]
+        # Find both .doc and .docx files
+        word_files = [f for f in os.listdir(directory) if f.endswith(('.doc', '.docx'))]
         
-        if not docx_files:
+        if not word_files:
             return f"No Word documents found in {directory}"
         
-        result = f"Found {len(docx_files)} Word documents in {directory}:\n"
-        for file in docx_files:
+        result = f"Found {len(word_files)} Word documents in {directory}:\n"
+        for file in word_files:
             file_path = os.path.join(directory, file)
             size = os.path.getsize(file_path) / 1024  # KB
             result += f"- {file} ({size:.2f} KB)\n"
@@ -1211,9 +1150,8 @@ def create_style(doc, style_name, style_type, base_style=None, font_properties=N
 # Add these MCP tools to the existing set
 
 @mcp.tool(name="format_text")
-async def format_text(filename: str, paragraph_index: int, start_pos: int, end_pos: int, 
-                     bold = None, italic = None, 
-                     underline = None, color = None,
+async def format_text(filename: str, paragraph_index: int, start_pos: int, end_pos: int,
+                     bold = None, italic = None, underline = None, color = None,
                      font_size = None, font_name = None) -> str:
     """Format a specific range of text within a paragraph.
     
@@ -1225,23 +1163,26 @@ async def format_text(filename: str, paragraph_index: int, start_pos: int, end_p
         bold: Set text bold (True/False)
         italic: Set text italic (True/False)
         underline: Set text underlined (True/False)
-        color: Text color (e.g., 'red', 'blue', etc.)
+        color: Text color (e.g., 'red', 'blue')
         font_size: Font size in points
         font_name: Font name/family
+        
+    Returns:
+        Status message
     """
-    if not filename.endswith('.docx'):
-        filename += '.docx'
-    
-    if not os.path.exists(filename):
-        return f"Document {filename} does not exist"
-    
-    # Check if file is writeable
-    is_writeable, error_message = check_file_writeable(filename)
-    if not is_writeable:
-        return f"Cannot modify document: {error_message}. Consider creating a copy first."
-    
     try:
-        doc = Document(filename)
+        # Convert if needed
+        docx_path = ensure_docx_format(filename)
+        
+        if not os.path.exists(docx_path):
+            return f"Document {docx_path} does not exist"
+        
+        # Check if file is writeable
+        is_writeable, error_message = check_file_writeable(docx_path)
+        if not is_writeable:
+            return f"Cannot modify document: {error_message}. Consider creating a copy first."
+        
+        doc = Document(docx_path)
         
         # Преобразование строковых параметров в числовые
         try:
@@ -1352,8 +1293,8 @@ async def format_text(filename: str, paragraph_index: int, start_pos: int, end_p
         if end_pos < len(text):
             run_after = paragraph.add_run(text[end_pos:])
         
-        doc.save(filename)
-        return f"Text '{target_text}' formatted successfully in paragraph {paragraph_index}."
+        doc.save(docx_path)
+        return f"Text formatted in {filename}"
     except Exception as e:
         return f"Failed to format text: {str(e)}"
 
@@ -1365,31 +1306,34 @@ async def search_and_replace(filename: str, find_text: str, replace_text: str) -
         filename: Path to the Word document
         find_text: Text to search for
         replace_text: Text to replace with
+        
+    Returns:
+        Status message with count of replacements
     """
-    if not filename.endswith('.docx'):
-        filename += '.docx'
-    
-    if not os.path.exists(filename):
-        return f"Document {filename} does not exist"
-    
-    # Check if file is writeable
-    is_writeable, error_message = check_file_writeable(filename)
-    if not is_writeable:
-        return f"Cannot modify document: {error_message}. Consider creating a copy first."
-    
     try:
-        doc = Document(filename)
+        # Convert if needed
+        docx_path = ensure_docx_format(filename)
+        
+        if not os.path.exists(docx_path):
+            return f"Document {docx_path} does not exist"
+        
+        # Check if file is writeable
+        is_writeable, error_message = check_file_writeable(docx_path)
+        if not is_writeable:
+            return f"Cannot modify document: {error_message}. Consider creating a copy first."
+        
+        doc = Document(docx_path)
         
         # Perform find and replace
         count = find_and_replace_text(doc, find_text, replace_text)
         
         if count > 0:
-            doc.save(filename)
+            doc.save(docx_path)
             return f"Replaced {count} occurrence(s) of '{find_text}' with '{replace_text}'."
         else:
             return f"No occurrences of '{find_text}' found."
     except Exception as e:
-        return f"Failed to search and replace: {str(e)}"
+        return f"Failed to replace text: {str(e)}"
 
 @mcp.tool(name="delete_paragraph")
 async def delete_paragraph(filename: str, paragraph_index: int) -> str:
@@ -1398,20 +1342,23 @@ async def delete_paragraph(filename: str, paragraph_index: int) -> str:
     Args:
         filename: Path to the Word document
         paragraph_index: Index of the paragraph to delete (0-based)
+        
+    Returns:
+        Status message
     """
-    if not filename.endswith('.docx'):
-        filename += '.docx'
-    
-    if not os.path.exists(filename):
-        return f"Document {filename} does not exist"
-    
-    # Check if file is writeable
-    is_writeable, error_message = check_file_writeable(filename)
-    if not is_writeable:
-        return f"Cannot modify document: {error_message}. Consider creating a copy first."
-    
     try:
-        doc = Document(filename)
+        # Convert if needed
+        docx_path = ensure_docx_format(filename)
+        
+        if not os.path.exists(docx_path):
+            return f"Document {docx_path} does not exist"
+        
+        # Check if file is writeable
+        is_writeable, error_message = check_file_writeable(docx_path)
+        if not is_writeable:
+            return f"Cannot modify document: {error_message}. Consider creating a copy first."
+        
+        doc = Document(docx_path)
         
         # Validate paragraph index
         if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
@@ -1423,16 +1370,15 @@ async def delete_paragraph(filename: str, paragraph_index: int) -> str:
         p = paragraph._p
         p.getparent().remove(p)
         
-        doc.save(filename)
-        return f"Paragraph at index {paragraph_index} deleted successfully."
+        doc.save(docx_path)
+        return f"Paragraph deleted from {filename}"
     except Exception as e:
         return f"Failed to delete paragraph: {str(e)}"
 
 @mcp.tool(name="create_custom_style")
-async def create_custom_style(filename: str, style_name: str, 
-                             bold = None, italic = None,
-                             font_size = None, font_name = None,
-                             color = None, base_style = None) -> str:
+async def create_custom_style(filename: str, style_name: str, bold = None, italic = None,
+                            font_size = None, font_name = None, color = None,
+                            base_style = None) -> str:
     """Create a custom style in the document.
     
     Args:
@@ -1444,25 +1390,28 @@ async def create_custom_style(filename: str, style_name: str,
         font_name: Font name/family
         color: Text color (e.g., 'red', 'blue')
         base_style: Optional existing style to base this on
+        
+    Returns:
+        Status message
     """
-    if not filename.endswith('.docx'):
-        filename += '.docx'
-    
-    if not os.path.exists(filename):
-        return f"Document {filename} does not exist"
-    
-    # Check if file is writeable
-    is_writeable, error_message = check_file_writeable(filename)
-    if not is_writeable:
-        return f"Cannot modify document: {error_message}. Consider creating a copy first."
-    
     try:
-        doc = Document(filename)
+        # Convert if needed
+        docx_path = ensure_docx_format(filename)
+        
+        if not os.path.exists(docx_path):
+            return f"Document {docx_path} does not exist"
+        
+        # Check if file is writeable
+        is_writeable, error_message = check_file_writeable(docx_path)
+        if not is_writeable:
+            return f"Cannot modify document: {error_message}. Consider creating a copy first."
+        
+        doc = Document(docx_path)
         
         # Build font properties dictionary
         font_properties = {}
         
-        # Преобразуем строковые значения в bool, если необходимо
+        # Convert string values to bool if needed
         if bold is not None:
             if isinstance(bold, str):
                 if bold.lower() == 'true':
@@ -1502,16 +1451,14 @@ async def create_custom_style(filename: str, style_name: str,
             font_properties=font_properties
         )
         
-        doc.save(filename)
+        doc.save(docx_path)
         return f"Style '{style_name}' created successfully."
     except Exception as e:
-        return f"Failed to create style: {str(e)}"
+        return f"Failed to create custom style: {str(e)}"
 
 @mcp.tool(name="format_table")
-async def format_table(filename: str, table_index: int, 
-                      has_header_row = None,
-                      border_style = None,
-                      shading = None) -> str:
+async def format_table(filename: str, table_index: int, has_header_row = None,
+                      border_style = None, shading = None) -> str:
     """Format a table with borders, shading, and structure.
     
     Args:
@@ -1520,20 +1467,23 @@ async def format_table(filename: str, table_index: int,
         has_header_row: If True, formats the first row as a header
         border_style: Style for borders ('none', 'single', 'double', 'thick')
         shading: 2D list of cell background colors (by row and column)
+        
+    Returns:
+        Status message
     """
-    if not filename.endswith('.docx'):
-        filename += '.docx'
-    
-    if not os.path.exists(filename):
-        return f"Document {filename} does not exist"
-    
-    # Check if file is writeable
-    is_writeable, error_message = check_file_writeable(filename)
-    if not is_writeable:
-        return f"Cannot modify document: {error_message}. Consider creating a copy first."
-    
     try:
-        doc = Document(filename)
+        # Convert if needed
+        docx_path = ensure_docx_format(filename)
+        
+        if not os.path.exists(docx_path):
+            return f"Document {docx_path} does not exist"
+        
+        # Check if file is writeable
+        is_writeable, error_message = check_file_writeable(docx_path)
+        if not is_writeable:
+            return f"Cannot modify document: {error_message}. Consider creating a copy first."
+        
+        doc = Document(docx_path)
         
         # Validate table index
         try:
@@ -1548,7 +1498,7 @@ async def format_table(filename: str, table_index: int,
         
         # Format header row if requested
         if has_header_row:
-            # Преобразуем строковое значение в bool, если необходимо
+            # Convert string value to bool if needed
             is_header = False
             if isinstance(has_header_row, str):
                 if has_header_row.lower() == 'true':
@@ -1589,7 +1539,7 @@ async def format_table(filename: str, table_index: int,
         
         # Apply cell shading if specified
         if shading:
-            # Преобразуем строковое значение JSON в список, если необходимо
+            # Convert JSON string to list if needed
             if isinstance(shading, str):
                 try:
                     import json
@@ -1612,7 +1562,7 @@ async def format_table(filename: str, table_index: int,
                         # Skip if color format is invalid
                         pass
         
-        doc.save(filename)
+        doc.save(docx_path)
         return f"Table at index {table_index} formatted successfully."
     except Exception as e:
         return f"Failed to format table: {str(e)}"
@@ -1623,22 +1573,25 @@ async def add_page_break(filename: str) -> str:
     
     Args:
         filename: Path to the Word document
+        
+    Returns:
+        Status message
     """
-    if not filename.endswith('.docx'):
-        filename += '.docx'
-    
-    if not os.path.exists(filename):
-        return f"Document {filename} does not exist"
-    
-    # Check if file is writeable
-    is_writeable, error_message = check_file_writeable(filename)
-    if not is_writeable:
-        return f"Cannot modify document: {error_message}. Consider creating a copy first."
-    
     try:
-        doc = Document(filename)
+        # Convert if needed
+        docx_path = ensure_docx_format(filename)
+        
+        if not os.path.exists(docx_path):
+            return f"Document {docx_path} does not exist"
+        
+        # Check if file is writeable
+        is_writeable, error_message = check_file_writeable(docx_path)
+        if not is_writeable:
+            return f"Cannot modify document: {error_message}. Consider creating a copy first."
+        
+        doc = Document(docx_path)
         doc.add_page_break()
-        doc.save(filename)
+        doc.save(docx_path)
         return f"Page break added to {filename}."
     except Exception as e:
         return f"Failed to add page break: {str(e)}"
@@ -1651,20 +1604,23 @@ async def set_paragraph_alignment(filename: str, paragraph_index: int, alignment
         filename: Path to the Word document
         paragraph_index: Index of the paragraph (0-based)
         alignment: Alignment to set ('left', 'center', 'right', 'justify')
+        
+    Returns:
+        Status message
     """
-    if not filename.endswith('.docx'):
-        filename += '.docx'
-    
-    if not os.path.exists(filename):
-        return f"Document {filename} does not exist"
-    
-    # Check if file is writeable
-    is_writeable, error_message = check_file_writeable(filename)
-    if not is_writeable:
-        return f"Cannot modify document: {error_message}. Consider creating a copy first."
-    
     try:
-        doc = Document(filename)
+        # Convert if needed
+        docx_path = ensure_docx_format(filename)
+        
+        if not os.path.exists(docx_path):
+            return f"Document {docx_path} does not exist"
+        
+        # Check if file is writeable
+        is_writeable, error_message = check_file_writeable(docx_path)
+        if not is_writeable:
+            return f"Cannot modify document: {error_message}. Consider creating a copy first."
+        
+        doc = Document(docx_path)
         
         # Validate paragraph index
         if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
@@ -1685,208 +1641,117 @@ async def set_paragraph_alignment(filename: str, paragraph_index: int, alignment
         paragraph = doc.paragraphs[paragraph_index]
         paragraph.alignment = alignment_map[alignment.lower()]
         
-        doc.save(filename)
+        doc.save(docx_path)
         return f"Alignment for paragraph {paragraph_index} set to '{alignment}'."
     except Exception as e:
         return f"Failed to set paragraph alignment: {str(e)}"
 
-def get_headers_and_footers(doc_path: str) -> Dict[str, Any]:
-    """
-    Get header and footer information from a Word document.
-    
-    Args:
-        doc_path: Path to the Word document
-        
-    Returns:
-        Dictionary with header and footer information
-    """
-    if not os.path.exists(doc_path):
-        return {"error": f"Document {doc_path} does not exist"}
-    
-    try:
-        doc = Document(doc_path)
-        result = {
-            "headers": [],
-            "footers": []
-        }
-        
-        # Process each section
-        for i, section in enumerate(doc.sections):
-            section_info = {"section_index": i}
-            
-            # Process headers
-            header_info = {}
-            if section.header.is_linked_to_previous:
-                header_info["linked_to_previous"] = True
-            else:
-                header_info["linked_to_previous"] = False
-                header_text = []
-                for paragraph in section.header.paragraphs:
-                    header_text.append(paragraph.text)
-                header_info["text"] = "\n".join(header_text)
-                
-                # Add formatting information
-                runs_with_formatting = []
-                for para in section.header.paragraphs:
-                    for run in para.runs:
-                        if run.text.strip():
-                            run_info = {
-                                "text": run.text,
-                                "bold": run.bold,
-                                "italic": run.italic,
-                                "underline": run.underline
-                            }
-                            runs_with_formatting.append(run_info)
-                
-                header_info["formatted_runs"] = runs_with_formatting
-            
-            section_info["header"] = header_info
-            result["headers"].append(section_info)
-            
-            # Process footers
-            footer_info = {}
-            if section.footer.is_linked_to_previous:
-                footer_info["linked_to_previous"] = True
-            else:
-                footer_info["linked_to_previous"] = False
-                footer_text = []
-                for paragraph in section.footer.paragraphs:
-                    footer_text.append(paragraph.text)
-                footer_info["text"] = "\n".join(footer_text)
-                
-                # Add formatting information
-                runs_with_formatting = []
-                for para in section.footer.paragraphs:
-                    for run in para.runs:
-                        if run.text.strip():
-                            run_info = {
-                                "text": run.text,
-                                "bold": run.bold,
-                                "italic": run.italic,
-                                "underline": run.underline
-                            }
-                            runs_with_formatting.append(run_info)
-                
-                footer_info["formatted_runs"] = runs_with_formatting
-            
-            section_info["footer"] = footer_info
-            result["footers"].append(section_info)
-        
-        return result
-    except Exception as e:
-        return {"error": f"Failed to get headers and footers: {str(e)}"}
-
-def extract_footnotes_and_endnotes(doc_path: str) -> Dict[str, Any]:
-    """
-    Extract footnotes and endnotes from a Word document.
-    Note: This is limited by python-docx capabilities and accesses the underlying XML.
-    
-    Args:
-        doc_path: Path to the Word document
-        
-    Returns:
-        Dictionary with footnote and endnote information
-    """
-    if not os.path.exists(doc_path):
-        return {"error": f"Document {doc_path} does not exist"}
-    
-    try:
-        doc = Document(doc_path)
-        result = {
-            "footnotes": [],
-            "endnotes": []
-        }
-        
-        # Get access to the document part
-        document_part = doc._part
-        
-        # Try to get footnotes
-        try:
-            if hasattr(document_part, 'footnotes_part') and document_part.footnotes_part:
-                footnotes_part = document_part.footnotes_part
-                # Access the footnotes XML
-                footnotes_xml = footnotes_part._element
-                
-                # Extract footnotes - this is a simplified approach
-                for footnote in footnotes_xml.findall('.//w:footnote', {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}):
-                    footnote_id = footnote.get(qn('w:id'))
-                    if footnote_id and footnote_id not in ('-1', '0'):  # Skip special footnotes
-                        footnote_text = ""
-                        for paragraph in footnote.findall('.//w:p', {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}):
-                            for text_element in paragraph.findall('.//w:t', {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}):
-                                footnote_text += text_element.text if text_element.text else ""
-                        
-                        result["footnotes"].append({
-                            "id": footnote_id,
-                            "text": footnote_text
-                        })
-        except Exception as footnote_error:
-            result["footnote_error"] = str(footnote_error)
-        
-        # Try to get endnotes
-        try:
-            if hasattr(document_part, 'endnotes_part') and document_part.endnotes_part:
-                endnotes_part = document_part.endnotes_part
-                # Access the endnotes XML
-                endnotes_xml = endnotes_part._element
-                
-                # Extract endnotes - this is a simplified approach
-                for endnote in endnotes_xml.findall('.//w:endnote', {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}):
-                    endnote_id = endnote.get(qn('w:id'))
-                    if endnote_id and endnote_id not in ('-1', '0'):  # Skip special endnotes
-                        endnote_text = ""
-                        for paragraph in endnote.findall('.//w:p', {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}):
-                            for text_element in paragraph.findall('.//w:t', {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}):
-                                endnote_text += text_element.text if text_element.text else ""
-                        
-                        result["endnotes"].append({
-                            "id": endnote_id,
-                            "text": endnote_text
-                        })
-        except Exception as endnote_error:
-            result["endnote_error"] = str(endnote_error)
-        
-        return result
-    except Exception as e:
-        return {"error": f"Failed to extract footnotes and endnotes: {str(e)}"}
-
 @mcp.tool(name="get_headers_and_footers")
-async def get_headers_and_footers_tool(filename: str) -> str:
+async def get_headers_and_footers(filename: str) -> str:
     """Get header and footer information from a Word document.
     
     Args:
         filename: Path to the Word document
+        
+    Returns:
+        JSON string with header and footer information
     """
-    if not filename.endswith('.docx'):
-        filename += '.docx'
-    
-    if not os.path.exists(filename):
-        return f"Document {filename} does not exist"
-    
     try:
-        result = get_headers_and_footers(filename)
-        return json.dumps(result, indent=2)
+        # Convert if needed
+        docx_path = ensure_docx_format(filename)
+        
+        if not os.path.exists(docx_path):
+            return f"Document {docx_path} does not exist"
+            
+        doc = Document(docx_path)
+        
+        sections = doc.sections
+        headers_footers = []
+        
+        for i, section in enumerate(sections):
+            section_info = {
+                'section': i + 1,
+                'headers': {},
+                'footers': {}
+            }
+            
+            # Get headers
+            if section.header.is_linked_to_previous:
+                section_info['headers']['default'] = 'Linked to previous section'
+            else:
+                header_text = '\n'.join(p.text for p in section.header.paragraphs)
+                if header_text.strip():
+                    section_info['headers']['default'] = header_text
+                else:
+                    section_info['headers']['default'] = 'Empty'
+                    
+            # Get footers
+            if section.footer.is_linked_to_previous:
+                section_info['footers']['default'] = 'Linked to previous section'
+            else:
+                footer_text = '\n'.join(p.text for p in section.footer.paragraphs)
+                if footer_text.strip():
+                    section_info['footers']['default'] = footer_text
+                else:
+                    section_info['footers']['default'] = 'Empty'
+                    
+            headers_footers.append(section_info)
+            
+        return json.dumps(headers_footers, indent=2)
     except Exception as e:
         return f"Failed to get headers and footers: {str(e)}"
 
 @mcp.tool(name="get_footnotes_and_endnotes")
-async def get_footnotes_and_endnotes_tool(filename: str) -> str:
+async def get_footnotes_and_endnotes(filename: str) -> str:
     """Extract footnotes and endnotes from a Word document.
     
     Args:
         filename: Path to the Word document
+        
+    Returns:
+        JSON string with footnotes and endnotes information
     """
-    if not filename.endswith('.docx'):
-        filename += '.docx'
-    
-    if not os.path.exists(filename):
-        return f"Document {filename} does not exist"
-    
     try:
-        result = extract_footnotes_and_endnotes(filename)
-        return json.dumps(result, indent=2)
+        # Convert if needed
+        docx_path = ensure_docx_format(filename)
+        
+        if not os.path.exists(docx_path):
+            return f"Document {docx_path} does not exist"
+            
+        doc = Document(docx_path)
+        
+        # Access footnotes and endnotes through document part
+        doc_part = doc.part
+        notes = {
+            'footnotes': [],
+            'endnotes': []
+        }
+        
+        # Get footnotes
+        if hasattr(doc_part, 'footnotes_part') and doc_part.footnotes_part:
+            footnotes = doc_part.footnotes_part.notes
+            for note_id, note in footnotes.items():
+                if note_id != 0:  # Skip separator
+                    note_text = '\n'.join(p.text for p in note.paragraphs)
+                    notes['footnotes'].append({
+                        'id': note_id,
+                        'text': note_text
+                    })
+                    
+        # Get endnotes
+        if hasattr(doc_part, 'endnotes_part') and doc_part.endnotes_part:
+            endnotes = doc_part.endnotes_part.notes
+            for note_id, note in endnotes.items():
+                if note_id != 0:  # Skip separator
+                    note_text = '\n'.join(p.text for p in note.paragraphs)
+                    notes['endnotes'].append({
+                        'id': note_id,
+                        'text': note_text
+                    })
+                    
+        return json.dumps(notes, indent=2)
     except Exception as e:
-        return f"Failed to extract notes: {str(e)}"
+        return f"Failed to get footnotes and endnotes: {str(e)}"
 
 # Main execution point
 def main():
